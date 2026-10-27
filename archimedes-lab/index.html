@@ -1,0 +1,417 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Тонет или плавает</title>
+<style>
+  :root{--ink:#243044;--muted:#667085;--bg:#f4f6fb;--card:#fff;--accent:#2f80ed}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;padding:10px;background:var(--bg);font-family:Arial,Helvetica,sans-serif;color:var(--ink)}
+  .app{max-width:860px;margin:0 auto}
+  h1{font-size:20px;margin:0 0 8px;text-align:center}
+  .bar{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;justify-content:center;background:var(--card);border-radius:14px;padding:10px;margin-bottom:8px;box-shadow:0 3px 12px rgba(0,0,0,.06)}
+  .seg{display:flex;border:2px solid #d5dbe8;border-radius:999px;overflow:hidden}
+  .seg button{border:0;background:#fff;padding:8px 13px;font-size:14px;font-weight:700;cursor:pointer;color:var(--ink)}
+  .seg button.on{background:var(--accent);color:#fff}
+  label.f{display:flex;align-items:center;gap:6px;font-size:14px;color:var(--muted)}
+  select{padding:6px 8px;border-radius:8px;border:1px solid #cfd7e4;background:#f7f8fb;font-size:14px;color:var(--ink)}
+  input[type=range]{width:110px}
+  .stage{position:relative;background:var(--card);border-radius:14px;padding:6px;box-shadow:0 3px 12px rgba(0,0,0,.06)}
+  canvas{display:block;width:100%;height:auto;touch-action:none;border-radius:10px;background:#f7fbff}
+  #predict{position:absolute;left:50%;top:78px;transform:translateX(-50%);background:#fff;border:2px solid var(--accent);border-radius:14px;padding:10px 14px;text-align:center;box-shadow:0 8px 24px rgba(0,0,0,.22);display:none;z-index:5;font-size:15px}
+  #predict b{display:block;margin-bottom:8px}
+  #predict button{border:0;border-radius:10px;padding:10px 16px;margin:3px;font-size:15px;font-weight:700;cursor:pointer;background:var(--accent);color:#fff}
+  #predict button.alt{background:#ff8a3d}
+  .info{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+  .box{background:var(--card);border-radius:14px;padding:10px 12px;box-shadow:0 3px 12px rgba(0,0,0,.06);font-size:14px;line-height:1.45;min-height:96px}
+  .box h2{margin:0 0 4px;font-size:15px}
+  .w{color:#d23c3c;font-weight:700}.u{color:#2f80ed;font-weight:700}
+  .res{font-weight:700}.good{color:#1a8f3c}.bad{color:#c62828}
+  .hint{font-size:13px;color:var(--muted);text-align:center;margin:8px 4px 0}
+  @media (max-width:620px){.info{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="app">
+  <h1>Тонет или плавает?</h1>
+  <div class="bar">
+    <div class="seg" id="modes">
+      <button data-m="float" class="on">Бросаем в воду</button>
+      <button data-m="scale">Взвешиваем</button>
+    </div>
+    <label class="f">Жидкость
+      <select id="liquid"></select>
+    </label>
+    <label class="f">Размер кубика <input type="range" id="size" min="3" max="8" value="5"><span id="sizev">5 см</span></label>
+    <label class="f"><input type="checkbox" id="forces" checked> Показать силы</label>
+    <label class="f" id="guessWrap"><input type="checkbox" id="guess"> Сначала угадай</label>
+  </div>
+
+  <div class="stage">
+    <canvas id="cv" width="760" height="480"></canvas>
+    <div id="predict"><b>Как думаешь, что будет с этим телом?</b>
+      <button id="gSink">Утонет</button><button id="gFloat" class="alt">Будет плавать</button>
+    </div>
+  </div>
+
+  <div class="info">
+    <div class="box" id="infoBody"></div>
+    <div class="box" id="infoForces"></div>
+  </div>
+  <p class="hint" id="hint"></p>
+</div>
+
+<script>
+(function(){
+  'use strict';
+  var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+  var W = 760, H = 480;
+  var P = 8;                       // пикселей в сантиметре
+  var TANK = {l:40, r:392, floor:440, top:150};  // внутренняя часть стакана
+  var AREA = 300;                  // условная площадь дна, см²
+  var H0 = 22;                     // начальный уровень воды, см
+  var G = 900;                     // ускорение (пикс/с²), нарочно «медленнее настоящего»
+
+  var ITEMS = [
+    {name:'Дерево',   rho:0.5,  emoji:'🪵', color:'#c89b5e'},
+    {name:'Яблоко',   rho:0.8,  emoji:'🍎', color:'#e25a52'},
+    {name:'Лёд',      rho:0.92, emoji:'🧊', color:'#bfe6f7'},
+    {name:'Яйцо',     rho:1.09, emoji:'🥚', color:'#f4ead2'},
+    {name:'Картошка', rho:1.1,  emoji:'🥔', color:'#d3ab68'},
+    {name:'Камень',   rho:2.6,  emoji:'🪨', color:'#9aa3ad'},
+    {name:'Железо',   rho:7.8,  emoji:'🔩', color:'#7c8794'},
+    {name:'Золото',   rho:19.3, emoji:'🏅', color:'#f1c232'}
+  ];
+  var LIQUIDS = [
+    {id:'water', name:'Вода',                 rho:1.0,  rgb:'60,150,230', alpha:.40, visc:3},
+    {id:'oil',   name:'Подсолнечное масло',   rho:0.92, rgb:'235,190,40', alpha:.45, visc:3.5},
+    {id:'salt',  name:'Очень солёная вода',   rho:1.2,  rgb:'80,190,200', alpha:.45, visc:3.5},
+    {id:'honey', name:'Мёд',                  rho:1.4,  rgb:'225,140,30', alpha:.62, visc:14}
+  ];
+
+  var S = {mode:'float', liquid:LIQUIDS[0], size:5, forces:true, guess:false, objs:[], selected:null, drag:null,
+           level:H0, hang:{item:ITEMS[6], depth:0.0}, stats:{ok:0, all:0}, msg:''};
+
+  // ---------- интерфейс ----------
+  var liquidSel = document.getElementById('liquid');
+  LIQUIDS.forEach(function(l){ var o = document.createElement('option'); o.value = l.id; o.textContent = l.name + ' (' + f1(l.rho) + ' г/см³)'; liquidSel.appendChild(o); });
+  liquidSel.onchange = function(){ S.liquid = LIQUIDS.filter(function(l){ return l.id === liquidSel.value; })[0]; S.msg = ''; };
+  var sizeEl = document.getElementById('size');
+  sizeEl.oninput = function(){ S.size = +sizeEl.value; document.getElementById('sizev').textContent = S.size + ' см'; if(S.mode === 'scale') setHang(S.hang.item); };
+  document.getElementById('forces').onchange = function(e){ S.forces = e.target.checked; };
+  document.getElementById('guess').onchange = function(e){ S.guess = e.target.checked; };
+  var modeBtns = document.querySelectorAll('#modes button');
+  [].forEach.call(modeBtns, function(b){
+    b.onclick = function(){
+      S.mode = b.dataset.m; S.msg = '';
+      [].forEach.call(modeBtns, function(x){ x.classList.toggle('on', x === b); });
+      document.getElementById('guessWrap').style.display = S.mode === 'float' ? '' : 'none';
+      closePredict();
+      if(S.mode === 'scale'){ S.objs = []; S.selected = null; setHang(S.hang.item); }
+      else { S.objs = []; S.selected = null; }
+      hint();
+    };
+  });
+  function hint(){
+    document.getElementById('hint').textContent = S.mode === 'float'
+      ? 'Перетащи тело с полки в стакан. Если отпустить его рядом со стаканом, а не над ним, оно вернётся на полку.'
+      : 'Выбери тело на полке и двигай ползунок «Опусти в воду». Динамометр показывает, с какой силой тело тянет вниз.';
+  }
+  hint();
+
+  // ---------- вспомогательное ----------
+  function f1(n){ return (Math.round(n * 10) / 10).toString().replace('.', ','); }
+  function f2(n){ return (Math.round(n * 100) / 100).toString().replace('.', ','); }
+  function f0(n){ return Math.round(n).toString(); }
+  function volume(o){ return o.s * o.s * o.s; }              // см³
+  function mass(o){ return o.rho * volume(o); }               // граммы
+  function weightN(o){ return mass(o) * 9.8 / 1000; }         // ньютоны
+  function half(o){ return o.s * P / 2; }
+  function surfaceY(){ return TANK.floor - S.level * P; }
+  function subFrac(o){
+    var h = half(o), bottom = o.y + h, sy = surfaceY();
+    return Math.max(0, Math.min(1, (bottom - sy) / (2 * h)));
+  }
+  function archN(o){ return S.liquid.rho * volume(o) * subFrac(o) * 9.8 / 1000; }
+
+  function makeObj(item, x, y){
+    return {item:item, name:item.name, rho:item.rho, emoji:item.emoji, color:item.color, s:S.size, x:x, y:y, vy:0, held:true, waiting:false, guess:null, calm:0, born:performance.now()};
+  }
+  function setHang(item){
+    S.hang.item = item;
+    var o = makeObj(item, (TANK.l + TANK.r) / 2, 0); o.held = false; S.hang.obj = o; S.selected = o; S.msg = '';
+  }
+
+  // ---------- физика ----------
+  function step(dt){
+    var liq = S.liquid;
+    if(S.mode === 'float'){
+      S.objs.forEach(function(o){
+        if(o.held || o.waiting) return;
+        var fs = subFrac(o);
+        var a = G * (1 - liq.rho * fs / o.rho);
+        var drag = liq.visc * fs + 0.05;
+        o.vy += a * dt; o.vy -= o.vy * drag * dt;
+        o.y += o.vy * dt;
+        var h = half(o);
+        if(o.y + h > TANK.floor){ o.y = TANK.floor - h; if(o.vy > 80) o.vy = -o.vy * 0.15; else o.vy = 0; }
+        o.x = Math.max(TANK.l + h, Math.min(TANK.r - h, o.x));
+        // «успокоилось»
+        if(o.guess && !o.done){
+          if(Math.abs(o.vy) < 10 && o.y > surfaceY() - h - 4) o.calm += dt; else o.calm = Math.max(0, o.calm - dt);
+          if(o.calm > 0.9 || performance.now() - o.released > 7000) finish(o);
+        }
+      });
+      // не даём телам проходить друг через друга
+      for(var i = 0; i < S.objs.length; i++) for(var j = i + 1; j < S.objs.length; j++){
+        var a = S.objs[i], b = S.objs[j]; if(a.held || b.held) continue;
+        var dx = b.x - a.x, dy = b.y - a.y, ox = half(a) + half(b) - Math.abs(dx), oy = half(a) + half(b) - Math.abs(dy);
+        if(ox > 0 && oy > 0){
+          if(oy < ox){ var up = dy < 0 ? b : a; up.y -= oy; if(up.vy > 0) up.vy = 0; }
+          else { var sgn = dx >= 0 ? 1 : -1; a.x -= sgn * ox / 2; b.x += sgn * ox / 2; }
+        }
+      }
+    } else {
+      var o = S.hang.obj; if(!o) return;
+      var travel = TANK.floor - 124 - o.s * P;
+      o.top = 124 + S.hang.depth * travel; o.y = o.top + half(o); o.x = (TANK.l + TANK.r) / 2;
+    }
+    // уровень воды
+    var vsub = 0;
+    var list = S.mode === 'float' ? S.objs : (S.hang.obj ? [S.hang.obj] : []);
+    list.forEach(function(o){ vsub += volume(o) * subFrac(o); });
+    var target = H0 + vsub / AREA;
+    S.level += (target - S.level) * Math.min(1, dt * 8);
+  }
+
+  function finish(o){
+    o.done = true;
+    var floats = o.rho < S.liquid.rho, said = o.guess === 'float';
+    S.stats.all++;
+    var ok = floats === said; if(ok) S.stats.ok++;
+    var why = floats
+      ? 'Плотность тела (' + f2(o.rho) + ') меньше, чем у жидкости (' + f2(S.liquid.rho) + '), поэтому оно плавает.'
+      : 'Плотность тела (' + f2(o.rho) + ') больше, чем у жидкости (' + f2(S.liquid.rho) + '), поэтому оно тонет.';
+    S.msg = (ok ? '<span class="res good">Верно!</span> ' : '<span class="res bad">Не угадал.</span> ') + why;
+  }
+
+  // ---------- рисование ----------
+  function rr(x, y, w, h, r){
+    ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+  }
+  function drawCube(o, alpha){
+    var h = half(o), x = o.x - h, y = o.y - h, w = h * 2;
+    ctx.save(); ctx.globalAlpha = alpha == null ? 1 : alpha;
+    ctx.fillStyle = o.color; rr(x, y, w, w, 6); ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,.35)'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.font = Math.round(w * 0.55) + 'px "Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#000';
+    ctx.fillText(o.emoji, o.x, o.y + 1);
+    ctx.restore();
+  }
+  function arrow(x, y, len, color, up, label){
+    if(Math.abs(len) < 3) return;
+    var dir = up ? -1 : 1, y2 = y + dir * len;
+    ctx.save(); ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = 4; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x, y2 + dir * 2); ctx.lineTo(x - 8, y2 - dir * 10); ctx.lineTo(x + 8, y2 - dir * 10); ctx.closePath(); ctx.fill();
+    if(label){ ctx.font = 'bold 12px Arial'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(label, x + 10, y + dir * len / 2); }
+    ctx.restore();
+  }
+  function drawForces(o, pull){
+    if(!S.forces || o.held) return;
+    var K = 70;  // пикселей на ньютон... масштаб подстраивается ниже
+    var w = weightN(o), a = archN(o);
+    var maxF = Math.max(w, a, 0.0001), k = Math.min(K, 110 / maxF);
+    var h = half(o);
+    arrow(o.x - h * 0.45, o.y, w * k, '#d23c3c', false, 'тяжесть');
+    arrow(o.x + h * 0.45, o.y, a * k, '#2f80ed', true, 'выталкивает');
+    if(pull != null && pull > 0.001) arrow(o.x, o.y - h, pull * k, '#555', true, null);
+  }
+
+  function drawScene(t){
+    ctx.clearRect(0, 0, W, H);
+    // стол
+    ctx.fillStyle = '#e9eef6'; ctx.fillRect(0, TANK.floor + 6, W, H - TANK.floor - 6);
+    ctx.fillStyle = '#d5dcea'; ctx.fillRect(0, TANK.floor + 6, W, 4);
+
+    var sy = surfaceY(), liq = S.liquid;
+    // тела (под водой)
+    var showObjs = S.mode === 'float' ? S.objs : [];
+    if(S.mode === 'scale' && S.hang.obj){
+      var o = S.hang.obj; var cx = o.x;
+      // динамометр и нить
+      ctx.fillStyle = '#9aa3ad'; ctx.fillRect(cx - 2, 6, 4, 14);
+      ctx.fillStyle = '#fff'; ctx.strokeStyle = '#8a94a3'; ctx.lineWidth = 2; rr(cx - 26, 18, 52, 92, 8); ctx.fill(); ctx.stroke();
+      var wN = weightN(o), pull = Math.max(0, wN - archN(o));
+      var maxN = Math.max(0.5, Math.ceil(wN * 2) / 2);
+      // шкала
+      ctx.strokeStyle = '#c8d0dd'; ctx.lineWidth = 1; ctx.fillStyle = '#667085'; ctx.font = '10px Arial'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      for(var i = 0; i <= 4; i++){ var yy = 28 + i * 18; ctx.beginPath(); ctx.moveTo(cx - 20, yy); ctx.lineTo(cx - 8, yy); ctx.stroke(); ctx.fillText(f1(maxN * i / 4), cx - 5, yy); }
+      var ny = 28 + (pull / maxN) * 72; ny = Math.min(ny, 100);
+      ctx.fillStyle = '#d23c3c'; ctx.beginPath(); ctx.moveTo(cx - 24, ny); ctx.lineTo(cx - 14, ny - 5); ctx.lineTo(cx - 14, ny + 5); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#243044'; ctx.font = 'bold 13px Arial'; ctx.textAlign = 'center'; ctx.fillText('Н', cx + 14, 118 - 6);
+      ctx.strokeStyle = '#555'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(cx, 110); ctx.lineTo(cx, o.top); ctx.stroke();
+      drawCube(o);
+    }
+    showObjs.forEach(function(o){ drawCube(o); });
+
+    // вода поверх тел
+    ctx.save();
+    var wave = Math.sin(t / 400) * 1.5;
+    ctx.beginPath(); ctx.rect(TANK.l, sy, TANK.r - TANK.l, TANK.floor - sy); ctx.clip();
+    ctx.fillStyle = 'rgba(' + liq.rgb + ',' + liq.alpha + ')'; ctx.fillRect(TANK.l, sy + wave, TANK.r - TANK.l, TANK.floor - sy);
+    ctx.restore();
+    ctx.strokeStyle = 'rgba(' + liq.rgb + ',.95)'; ctx.lineWidth = 2; ctx.beginPath();
+    for(var x = TANK.l; x <= TANK.r; x += 8){ var yy2 = sy + Math.sin(x / 30 + t / 500) * 1.2; if(x === TANK.l) ctx.moveTo(x, yy2); else ctx.lineTo(x, yy2); }
+    ctx.stroke();
+
+    // стекло стакана
+    ctx.strokeStyle = '#7d8797'; ctx.lineWidth = 4; ctx.lineJoin = 'round';
+    ctx.beginPath(); ctx.moveTo(TANK.l - 2, TANK.top - 10); ctx.lineTo(TANK.l - 2, TANK.floor + 2); ctx.lineTo(TANK.r + 2, TANK.floor + 2); ctx.lineTo(TANK.r + 2, TANK.top - 10); ctx.stroke();
+    // линейка на стенке
+    ctx.strokeStyle = 'rgba(70,80,95,.55)'; ctx.lineWidth = 1; ctx.fillStyle = 'rgba(70,80,95,.8)'; ctx.font = '10px Arial'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    for(var cm = 0; cm <= 36; cm += 2){ var ly = TANK.floor - cm * P; if(ly < TANK.top - 8) break; ctx.beginPath(); ctx.moveTo(TANK.l, ly); ctx.lineTo(TANK.l + (cm % 10 === 0 ? 14 : 8), ly); ctx.stroke(); if(cm % 10 === 0 && cm > 0) ctx.fillText(cm + ' см', TANK.l + 18, ly); }
+    // отметка начального уровня
+    var y0 = TANK.floor - H0 * P;
+    ctx.setLineDash([5, 4]); ctx.strokeStyle = 'rgba(36,48,68,.5)'; ctx.beginPath(); ctx.moveTo(TANK.l, y0); ctx.lineTo(TANK.r, y0); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = 'rgba(36,48,68,.7)'; ctx.textAlign = 'right'; ctx.font = '11px Arial'; ctx.fillText('было', TANK.r - 6, y0 + 9);
+    var rise = (S.level - H0) * 10; // мм
+    if(rise > 1){ ctx.fillStyle = '#1b5fc4'; ctx.font = 'bold 12px Arial'; ctx.fillText('вода поднялась на ' + f1(rise) + ' мм', TANK.r - 6, sy - 9); }
+
+    // силы
+    if(S.mode === 'float') S.objs.forEach(function(o){ drawForces(o); });
+    else if(S.hang.obj){ var oo = S.hang.obj; drawForces(oo, Math.max(0, weightN(oo) - archN(oo))); }
+
+    // выделение
+    if(S.selected && S.mode === 'float' && S.objs.indexOf(S.selected) >= 0){
+      var h = half(S.selected) + 4;
+      ctx.strokeStyle = '#ffb400'; ctx.lineWidth = 2.5; ctx.setLineDash([6, 4]); rr(S.selected.x - h, S.selected.y - h, h * 2, h * 2, 8); ctx.stroke(); ctx.setLineDash([]);
+    }
+
+    drawShelf();
+    if(S.guess && S.mode === 'float' && S.stats.all){
+      ctx.fillStyle = '#243044'; ctx.font = 'bold 14px Arial'; ctx.textAlign = 'left'; ctx.fillText('Угадано: ' + S.stats.ok + ' из ' + S.stats.all, 12, 18);
+    }
+    if(S.drag) drawCube(S.drag);
+  }
+
+  // ---------- полка ----------
+  var SH = {x:420, y:56, cw:167, ch:96};
+  function slotRect(i){ var c = i % 2, r = Math.floor(i / 2); return {x:SH.x + c * SH.cw, y:SH.y + r * SH.ch, w:SH.cw - 8, h:SH.ch - 8}; }
+  function drawShelf(){
+    ctx.fillStyle = '#243044'; ctx.font = 'bold 15px Arial'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillText(S.mode === 'float' ? 'Полка с телами' : 'Выбери тело', SH.x, 32);
+    ITEMS.forEach(function(it, i){
+      var r = slotRect(i);
+      var active = S.mode === 'scale' && S.hang.item === it;
+      ctx.fillStyle = active ? '#e3efff' : '#fff'; ctx.strokeStyle = active ? '#2f80ed' : '#d5dbe8'; ctx.lineWidth = active ? 3 : 1.5;
+      rr(r.x, r.y, r.w, r.h, 12); ctx.fill(); ctx.stroke();
+      var ob = {color:it.color, emoji:it.emoji, s:5, x:r.x + 34, y:r.y + r.h / 2};
+      var sz = 5; var save = P; P = 7; drawCube(ob); P = save;
+      ctx.fillStyle = '#243044'; ctx.font = 'bold 14px Arial'; ctx.textAlign = 'left'; ctx.fillText(it.name, r.x + 66, r.y + r.h / 2 - 11);
+      ctx.fillStyle = '#667085'; ctx.font = '13px Arial'; ctx.fillText(f2(it.rho) + ' г/см³', r.x + 66, r.y + r.h / 2 + 10);
+    });
+  }
+
+  // ---------- мышь и касания ----------
+  function pos(ev){ var r = cv.getBoundingClientRect(); return {x:(ev.clientX - r.left) / r.width * W, y:(ev.clientY - r.top) / r.height * H}; }
+  function hitObj(p){
+    for(var i = S.objs.length - 1; i >= 0; i--){ var o = S.objs[i], h = half(o); if(Math.abs(p.x - o.x) <= h && Math.abs(p.y - o.y) <= h) return o; }
+    return null;
+  }
+  function hitShelf(p){
+    for(var i = 0; i < ITEMS.length; i++){ var r = slotRect(i); if(p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h) return ITEMS[i]; }
+    return null;
+  }
+  cv.addEventListener('pointerdown', function(ev){
+    if(S.predictOpen) return;
+    var p = pos(ev), it = hitShelf(p);
+    if(S.mode === 'scale'){ if(it){ setHang(it); } return; }
+    if(it){
+      if(S.objs.length >= 6) S.objs.shift();
+      var o = makeObj(it, p.x, p.y); S.drag = o; S.selected = o; S.msg = ''; try { cv.setPointerCapture(ev.pointerId); } catch(e){}
+      return;
+    }
+    var h = hitObj(p);
+    if(h){ S.drag = h; h.held = true; h.waiting = false; h.vy = 0; h.done = true; h.dx = h.x - p.x; h.dy = h.y - p.y; S.selected = h; S.msg = ''; try { cv.setPointerCapture(ev.pointerId); } catch(e){} }
+  });
+  cv.addEventListener('pointermove', function(ev){
+    if(!S.drag) return;
+    var p = pos(ev), o = S.drag;
+    o.x = p.x + (o.dx || 0); o.y = Math.max(half(o) + 4, Math.min(TANK.floor - half(o), p.y + (o.dy || 0)));
+  });
+  function release(){
+    var o = S.drag; if(!o) return; S.drag = null;
+    var h = half(o);
+    if(o.x < TANK.l - 6 || o.x > TANK.r + 6){ var i = S.objs.indexOf(o); if(i >= 0) S.objs.splice(i, 1); if(S.selected === o) S.selected = null; return; }
+    o.x = Math.max(TANK.l + h, Math.min(TANK.r - h, o.x));
+    o.held = false; o.released = performance.now(); o.dx = o.dy = 0;
+    if(S.objs.indexOf(o) < 0) S.objs.push(o);
+    if(S.guess && !o.guess && !o.done){ o.waiting = true; openPredict(o); }
+  }
+  cv.addEventListener('pointerup', release);
+  cv.addEventListener('pointercancel', release);
+
+  // ---------- «сначала угадай» ----------
+  var predictEl = document.getElementById('predict'), pending = null;
+  function openPredict(o){ pending = o; S.predictOpen = true; predictEl.style.display = 'block'; }
+  function closePredict(){ pending = null; S.predictOpen = false; predictEl.style.display = 'none'; }
+  function choose(g){ if(!pending) return; pending.guess = g; pending.waiting = false; pending.released = performance.now(); pending.done = false; closePredict(); }
+  document.getElementById('gSink').onclick = function(){ choose('sink'); };
+  document.getElementById('gFloat').onclick = function(){ choose('float'); };
+
+  // ---------- подписи под сценой ----------
+  var depthWrap = null;
+  function ensureDepth(){
+    if(depthWrap) return;
+    depthWrap = document.createElement('div'); depthWrap.style.cssText = 'text-align:center;margin-top:6px;font-size:14px;color:#667085';
+    depthWrap.innerHTML = 'Опусти в воду <input type="range" id="depth" min="0" max="100" value="0" style="width:min(340px,70%);vertical-align:middle">';
+    document.querySelector('.stage').appendChild(depthWrap);
+    depthWrap.querySelector('input').oninput = function(e){ S.hang.depth = +e.target.value / 100; };
+  }
+  var lastInfo = 0;
+  function info(now){
+    if(now - lastInfo < 120) return; lastInfo = now;
+    ensureDepth(); depthWrap.style.display = S.mode === 'scale' ? 'block' : 'none';
+    var o = S.selected, liq = S.liquid, b = document.getElementById('infoBody'), f = document.getElementById('infoForces');
+    if(!o){
+      b.innerHTML = '<h2>Тело</h2>Возьми любое тело с полки и брось в стакан.';
+      f.innerHTML = '<h2>Что происходит</h2>Здесь появятся силы: тяжесть тянет вниз, а вода выталкивает вверх.' + (S.msg ? '<p>' + S.msg + '</p>' : '');
+      return;
+    }
+    var V = volume(o), fs = subFrac(o), vs = V * fs, w = weightN(o), a = archN(o);
+    b.innerHTML = '<h2>' + o.name + ' ' + o.emoji + '</h2>' +
+      'Размер: ' + o.s + ' × ' + o.s + ' × ' + o.s + ' см, объём ' + f0(V) + ' см³<br>' +
+      'Масса: ' + f0(mass(o)) + ' г · плотность тела: <b>' + f2(o.rho) + ' г/см³</b><br>' +
+      'Жидкость: ' + liq.name.toLowerCase() + ', плотность <b>' + f2(liq.rho) + ' г/см³</b><br>' +
+      'Тело ' + (o.rho < liq.rho ? '<b class="good">легче жидкости, будет плавать</b>' : '<b class="bad">тяжелее жидкости, будет тонуть</b>');
+    var text = '<h2>Силы</h2>' +
+      '<span class="w">Тяжесть: ' + f2(w) + ' Н</span><br>' +
+      '<span class="u">Выталкивающая сила: ' + f2(a) + ' Н</span><br>' +
+      'Вытеснено жидкости: <b>' + f0(vs) + ' мл</b> (' + f0(vs * liq.rho) + ' г)';
+    if(S.mode === 'scale'){
+      var pull = Math.max(0, w - a);
+      text += '<br>Динамометр показывает: <b>' + f2(pull) + ' Н</b>' + (a >= w && fs > 0 ? ' <span class="good">(тело лёгкое — нить провисает)</span>' : '');
+      if(fs > 0 && a < w) text += '<br><small>Вес в жидкости = вес в воздухе − выталкивающая сила.</small>';
+    } else if(fs > 0 && Math.abs(w - a) < 0.02 && !S.drag) text += '<br><span class="good">Силы равны — тело плавает.</span>';
+    if(S.msg) text += '<p style="margin:6px 0 0">' + S.msg + '</p>';
+    f.innerHTML = text;
+  }
+
+  // ---------- цикл ----------
+  var last = performance.now();
+  function loop(now){
+    var dt = Math.min(0.033, (now - last) / 1000); last = now;
+    step(dt); drawScene(now); info(now);
+    requestAnimationFrame(loop);
+  }
+  setHang(S.hang.item); S.objs = []; S.selected = null;
+  document.getElementById('size').value = S.size;
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

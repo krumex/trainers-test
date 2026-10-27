@@ -1,0 +1,407 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Прыгай и считай</title>
+<style>
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;background:#cfeaff;font-family:Arial,Helvetica,sans-serif;color:#243044;overflow:hidden;touch-action:none;user-select:none;-webkit-user-select:none}
+  #wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:linear-gradient(#8fd3ff,#e6f6ff)}
+  #stage{position:relative}
+  canvas{display:block;border-radius:14px;box-shadow:0 6px 24px rgba(0,0,0,.18);background:#dff2ff}
+  .overlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    background:rgba(36,48,68,.55);border-radius:14px;padding:14px;text-align:center;color:#fff}
+  .overlay.hidden{display:none}
+  .card{background:#fff;color:#243044;border-radius:18px;padding:18px 16px;max-width:92%;width:340px;box-shadow:0 8px 30px rgba(0,0,0,.25)}
+  h1{margin:0 0 6px;font-size:24px}
+  p{margin:6px 0;font-size:15px;line-height:1.35}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin:12px 0}
+  .chip{min-width:44px;height:44px;border-radius:12px;border:2px solid #b9c6dc;background:#f3f6fb;font-size:20px;font-weight:700;color:#243044;cursor:pointer}
+  .chip.on{background:#5b5bd6;border-color:#5b5bd6;color:#fff}
+  .btn{border:0;border-radius:14px;padding:14px 26px;font-size:20px;font-weight:700;background:#ff8a3d;color:#fff;cursor:pointer;margin-top:6px}
+  .btn:active{transform:scale(.97)}
+  .small{font-size:13px;color:#667085}
+  #mute{position:absolute;right:8px;bottom:8px;width:40px;height:40px;border-radius:50%;border:0;background:rgba(255,255,255,.85);font-size:20px;cursor:pointer}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <button id="mute" title="Звук">🔊</button>
+
+    <div class="overlay" id="start">
+      <div class="card">
+        <h1>Прыгай и считай!</h1>
+        <p>Монстр прыгает сам. Ты решаешь, куда ему приземлиться: выбери платформу с правильным ответом.</p>
+        <p class="small">Какие таблицы умножения учим?</p>
+        <div class="chips" id="chips"></div>
+        <button class="btn" id="go">Играть</button>
+        <p class="small">Двигай монстра стрелками ← → или нажимай слева и справа от него.</p>
+      </div>
+    </div>
+
+    <div class="overlay hidden" id="over">
+      <div class="card">
+        <h1 id="overTitle">Игра окончена</h1>
+        <p id="overText"></p>
+        <button class="btn" id="again">Ещё раз</button>
+        <p class="small"><a href="#" id="changeTables" style="color:#5b5bd6">Выбрать таблицы</a></p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  'use strict';
+  // ---------- размеры «мира» ----------
+  var W = 400, H = 640;
+  var cv = document.getElementById('cv');
+  var ctx = cv.getContext('2d');
+  var stage = document.getElementById('stage');
+
+  function fit(){
+    var vw = window.innerWidth, vh = window.innerHeight;
+    var scale = Math.min(vw / W, vh / H);
+    var cssW = Math.floor(W * scale), cssH = Math.floor(H * scale);
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cv.style.width = cssW + 'px'; cv.style.height = cssH + 'px';
+    stage.style.width = cssW + 'px'; stage.style.height = cssH + 'px';
+    cv.width = Math.round(cssW * dpr); cv.height = Math.round(cssH * dpr);
+    ctx.setTransform(cv.width / W, 0, 0, cv.height / H, 0, 0);
+  }
+  window.addEventListener('resize', fit); fit();
+
+  // ---------- хранилище (может быть недоступно во фрейме) ----------
+  function loadBest(){ try { return Number(localStorage.getItem('doodleMathBest')) || 0; } catch(e){ return 0; } }
+  function saveBest(v){ try { localStorage.setItem('doodleMathBest', String(v)); } catch(e){} }
+
+  // ---------- звук ----------
+  var actx = null, muted = false;
+  function audio(){
+    if(!actx){ try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e){} }
+    if(actx && actx.state === 'suspended') actx.resume();
+    return actx;
+  }
+  function tone(freq, dur, type, vol, slideTo){
+    if(muted) return; var a = audio(); if(!a) return;
+    var t = a.currentTime, o = a.createOscillator(), g = a.createGain();
+    o.type = type || 'sine'; o.frequency.setValueAtTime(freq, t);
+    if(slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t + dur);
+    g.gain.setValueAtTime(vol || 0.15, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g); g.connect(a.destination); o.start(t); o.stop(t + dur + 0.02);
+  }
+  function sBounce(){ tone(380, 0.12, 'sine', 0.10, 620); }
+  function sGood(){ tone(660, 0.12, 'triangle', 0.18); setTimeout(function(){ tone(880, 0.18, 'triangle', 0.18); }, 110); }
+  function sBad(){ tone(220, 0.30, 'sawtooth', 0.12, 110); }
+  function sOver(){ tone(330, 0.2, 'triangle', 0.15); setTimeout(function(){ tone(247, 0.2, 'triangle', 0.15); }, 200); setTimeout(function(){ tone(196, 0.4, 'triangle', 0.15); }, 400); }
+  var muteBtn = document.getElementById('mute');
+  muteBtn.onclick = function(e){ e.stopPropagation(); muted = !muted; muteBtn.textContent = muted ? '🔇' : '🔊'; };
+
+  // ---------- выбор таблиц ----------
+  var chosen = {2:1,3:1,4:1,5:1,6:1,7:1,8:1,9:1};
+  var chipsEl = document.getElementById('chips');
+  for(var n = 2; n <= 9; n++){
+    (function(n){
+      var b = document.createElement('button');
+      b.className = 'chip on'; b.textContent = n;
+      b.onclick = function(){
+        if(chosen[n]){ var left = Object.keys(chosen).length; if(left <= 1) return; delete chosen[n]; b.classList.remove('on'); }
+        else { chosen[n] = 1; b.classList.add('on'); }
+      };
+      chipsEl.appendChild(b);
+    })(n);
+  }
+
+  // ---------- состояние игры ----------
+  var JUMP = -720, GRAV = 1400, HSPEED = 300;
+  var TIER = 150;           // расстояние между ярусами
+  var PW = 92, PH = 16;     // платформа
+  var state = 'menu';       // menu | play | over
+  var mon, platforms, standing, question, score, lives, camY, best, streak, flash, particles, clouds, ding;
+  var keys = {left:false, right:false}, pointerX = null, pointerDown = false;
+
+  function rnd(a, b){ return a + Math.random() * (b - a); }
+  function rint(a, b){ return Math.floor(rnd(a, b + 1)); }
+  function shuffle(a){ for(var i = a.length - 1; i > 0; i--){ var j = rint(0, i), t = a[i]; a[i] = a[j]; a[j] = t; } return a; }
+
+  function newQuestion(){
+    var tables = Object.keys(chosen).map(Number);
+    var a = tables[rint(0, tables.length - 1)], b = rint(2, 9);
+    if(Math.random() < 0.5){ var t = a; a = b; b = t; }
+    var right = a * b, wrong = {}, cand = [right + a, right - a, right + b, right - b, right + 10, right - 10, right + 1, right - 1, right + 2, right - 2, (a+1)*b, (a-1)*b, a*(b+1), a*(b-1)];
+    shuffle(cand);
+    var out = [];
+    for(var i = 0; i < cand.length && out.length < 2; i++){
+      var c = cand[i];
+      if(c > 0 && c !== right && !wrong[c]){ wrong[c] = 1; out.push(c); }
+    }
+    return {a:a, b:b, right:right, wrong:out};
+  }
+
+  function makeTier(y){
+    var q = question;
+    var labels = shuffle([q.right, q.wrong[0], q.wrong[1]]);
+    // три платформы в разных «колонках», чтобы не пересекались
+    var cols = shuffle([0, 1, 2]);
+    var res = [];
+    for(var i = 0; i < 3; i++){
+      var colW = (W - 20) / 3;
+      var x = 10 + cols[i] * colW + rnd(0, colW - PW);
+      res.push({x:x, y:y + rnd(-14, 14), w:PW, label:labels[i], correct: labels[i] === q.right, state:'ok', vy:0, crack:0});
+    }
+    return res;
+  }
+
+  function startGame(){
+    score = 0; lives = 3; streak = 0; flash = 0; particles = []; ding = 0;
+    best = loadBest();
+    standing = {x:W/2 - 70, y:0, w:140, label:'', correct:false, state:'ok', vy:0, crack:0, base:true};
+    question = newQuestion();
+    platforms = [standing].concat(makeTier(-TIER));
+    mon = {x:W/2, y:-1, vx:0, vy:JUMP, squash:0, face:1, blink:0};
+    camY = -H * 0.72;
+    clouds = [];
+    for(var i = 0; i < 6; i++) clouds.push({x:rnd(0, W), y:rnd(-300, H), s:rnd(.6, 1.3), v:rnd(4, 12)});
+    state = 'play';
+    document.getElementById('start').classList.add('hidden');
+    document.getElementById('over').classList.add('hidden');
+    audio();
+  }
+
+  function loseLife(){
+    lives--; streak = 0; flash = 1;
+    sBad();
+    if(lives <= 0) gameOver();
+  }
+
+  function gameOver(){
+    state = 'over';
+    var newRecord = score > best;
+    if(newRecord){ best = score; saveBest(best); }
+    sOver();
+    document.getElementById('overTitle').textContent = score >= 10 ? 'Здорово!' : 'Игра окончена';
+    document.getElementById('overText').textContent =
+      'Правильных ответов: ' + score + (newRecord && score > 0 ? '. Это твой рекорд!' : (best ? '. Рекорд: ' + best : ''));
+    document.getElementById('over').classList.remove('hidden');
+  }
+
+  function burst(x, y, color, n){
+    for(var i = 0; i < n; i++) particles.push({x:x, y:y, vx:rnd(-140, 140), vy:rnd(-260, -40), life:rnd(.5, 1), c:color});
+  }
+
+  // ---------- обновление ----------
+  function update(dt){
+    // облака
+    clouds.forEach(function(c){ c.x += c.v * dt; if(c.x > W + 60) c.x = -80; });
+
+    if(state !== 'play'){ particlesStep(dt); return; }
+
+    // управление
+    var dir = 0;
+    if(keys.left) dir -= 1;
+    if(keys.right) dir += 1;
+    if(pointerDown && pointerX !== null){
+      if(pointerX < mon.x - 12) dir = -1; else if(pointerX > mon.x + 12) dir = 1;
+    }
+    var target = dir * HSPEED;
+    mon.vx += (target - mon.vx) * Math.min(1, dt * 12);
+    if(dir !== 0) mon.face = dir;
+
+    var prevFeet = mon.y;
+    mon.vy += GRAV * dt;
+    mon.x += mon.vx * dt;
+    mon.y += mon.vy * dt;
+    if(mon.x < -10) mon.x = W + 10; else if(mon.x > W + 10) mon.x = -10;
+
+    // платформы
+    for(var i = 0; i < platforms.length; i++){
+      var p = platforms[i];
+      if(p.state === 'fall'){ p.vy += 900 * dt; p.y += p.vy * dt; continue; }
+      if(p.crack > 0) p.crack -= dt;
+      if(mon.vy > 0 && prevFeet <= p.y + 2 && mon.y >= p.y && mon.x > p.x - 8 && mon.x < p.x + p.w + 8 && p.state === 'ok'){
+        mon.y = p.y; mon.vy = JUMP; mon.squash = 1; sBounce();
+        if(!p.base) landed(p);
+      }
+    }
+    platforms = platforms.filter(function(p){ return !(p.state === 'fall' && p.y - camY > H + 100); });
+
+    // упал вниз
+    if(mon.y - camY > H + 60){
+      loseLife();
+      if(state === 'play'){
+        mon.x = standing.x + standing.w/2; mon.y = standing.y; mon.vy = JUMP; mon.vx = 0;
+      }
+    }
+
+    // камера
+    var camTarget = standing.y - H * 0.72;
+    camY += (camTarget - camY) * Math.min(1, dt * 4);
+
+    if(mon.squash > 0) mon.squash = Math.max(0, mon.squash - dt * 4);
+    mon.blink -= dt; if(mon.blink < -3) mon.blink = 0.15;
+    if(flash > 0) flash = Math.max(0, flash - dt * 2.2);
+    if(ding > 0) ding = Math.max(0, ding - dt * 2);
+    particlesStep(dt);
+  }
+
+  function particlesStep(dt){
+    particles.forEach(function(p){ p.vy += 700 * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt; });
+    particles = particles.filter(function(p){ return p.life > 0; });
+  }
+
+  function landed(p){
+    if(p.correct){
+      score++; streak++; ding = 1;
+      sGood();
+      burst(p.x + p.w/2, p.y, '#ffd23f', 18);
+      // остальные платформы яруса падают
+      platforms.forEach(function(q){ if(q !== p && !q.base && q.state === 'ok'){ q.state = 'fall'; q.vy = 0; } });
+      platforms.forEach(function(q){ if(q.base && q !== p) q.state = 'fall'; });
+      p.base = true; p.label = String(p.label);
+      standing = p;
+      question = newQuestion();
+      platforms = platforms.concat(makeTier(standing.y - TIER));
+    } else {
+      p.state = 'fall'; p.vy = -120;
+      burst(p.x + p.w/2, p.y, '#ff6b6b', 14);
+      loseLife();
+    }
+  }
+
+  // ---------- рисование ----------
+  function rr(x, y, w, h, r){
+    ctx.beginPath();
+    ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+  }
+
+  function drawCloud(c){
+    var y = ((c.y - camY * 0.15) % (H + 200) + (H + 200)) % (H + 200) - 100;
+    ctx.save(); ctx.globalAlpha = .75; ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(c.x, y, 22 * c.s, 0, 7); ctx.arc(c.x + 24 * c.s, y + 4, 18 * c.s, 0, 7); ctx.arc(c.x - 24 * c.s, y + 6, 16 * c.s, 0, 7);
+    ctx.fill(); ctx.restore();
+  }
+
+  function drawPlatform(p){
+    var sy = p.y - camY;
+    if(sy < -40 || sy > H + 60) return;
+    var shake = p.crack > 0 ? Math.sin(p.crack * 60) * 2 : 0;
+    var x = p.x + shake;
+    if(p.base){
+      ctx.fillStyle = '#66bb6a'; rr(x, sy, p.w, PH, 8); ctx.fill();
+      ctx.fillStyle = '#4a9d4f'; ctx.fillRect(x + 6, sy + PH - 5, p.w - 12, 3);
+    } else {
+      ctx.fillStyle = '#7e8cff'; rr(x, sy, p.w, PH + 14, 10); ctx.fill();
+      ctx.fillStyle = '#5b5bd6'; rr(x, sy + PH + 6, p.w, 8, 6); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 22px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(p.label, x + p.w/2, sy + PH/2 + 6);
+    }
+  }
+
+  function drawMonster(){
+    var sx = mon.x, sy = mon.y - camY;
+    var sq = mon.squash, stretch = mon.vy < 0 ? Math.min(.14, -mon.vy / 5500) : 0;
+    var sxk = 1 + sq * .22 - stretch, syk = 1 - sq * .22 + stretch;
+    ctx.save();
+    ctx.translate(sx, sy);
+    ctx.scale(sxk, syk);
+    // ножки
+    ctx.fillStyle = '#6b3fa0';
+    ctx.beginPath(); ctx.ellipse(-12, -3, 8, 6, 0, 0, 7); ctx.ellipse(12, -3, 8, 6, 0, 0, 7); ctx.fill();
+    // рожки
+    ctx.fillStyle = '#ffd23f';
+    ctx.beginPath(); ctx.moveTo(-18, -50); ctx.lineTo(-10, -66); ctx.lineTo(-4, -50); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(18, -50); ctx.lineTo(10, -66); ctx.lineTo(4, -50); ctx.fill();
+    // тело
+    ctx.fillStyle = '#8e5ac7';
+    rr(-26, -56, 52, 54, 22); ctx.fill();
+    ctx.fillStyle = '#a77be0';
+    ctx.beginPath(); ctx.ellipse(0, -18, 15, 11, 0, 0, 7); ctx.fill();
+    // глаза
+    var blink = mon.blink < 0 && mon.blink > -0.12 ? 0.15 : 1;
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.ellipse(-9, -38, 8, 9 * blink, 0, 0, 7); ctx.ellipse(9, -38, 8, 9 * blink, 0, 0, 7); ctx.fill();
+    ctx.fillStyle = '#243044';
+    ctx.beginPath(); ctx.arc(-9 + mon.face * 2.5, -38, 3.6 * blink + .4, 0, 7); ctx.arc(9 + mon.face * 2.5, -38, 3.6 * blink + .4, 0, 7); ctx.fill();
+    // рот
+    ctx.strokeStyle = '#243044'; ctx.lineWidth = 2.5; ctx.lineCap = 'round';
+    ctx.beginPath();
+    if(flash > .4) { ctx.arc(0, -18, 6, Math.PI, 0); }
+    else { ctx.arc(0, -24, 8, 0.15, Math.PI - 0.15); }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawHeart(x, y, on){
+    ctx.save(); ctx.translate(x, y); ctx.fillStyle = on ? '#ff5470' : 'rgba(255,255,255,.55)';
+    ctx.beginPath(); ctx.moveTo(0, 6); ctx.bezierCurveTo(-14, -4, -8, -16, 0, -8); ctx.bezierCurveTo(8, -16, 14, -4, 0, 6); ctx.fill(); ctx.restore();
+  }
+
+  function draw(){
+    ctx.clearRect(0, 0, W, H);
+    var g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, '#9bd8ff'); g.addColorStop(1, '#e8f7ff');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    clouds.forEach(drawCloud);
+
+    if(state !== 'menu'){
+      platforms.forEach(drawPlatform);
+      drawMonster();
+      particles.forEach(function(p){ ctx.globalAlpha = Math.max(0, p.life); ctx.fillStyle = p.c; ctx.fillRect(p.x - 3, p.y - camY - 3, 6, 6); });
+      ctx.globalAlpha = 1;
+
+      // шапка: вопрос
+      ctx.fillStyle = 'rgba(36,48,68,.88)'; rr(10, 10, W - 20, 62, 16); ctx.fill();
+      var scale = 1 + ding * .12;
+      ctx.save(); ctx.translate(W/2, 41); ctx.scale(scale, scale);
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 34px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(question.a + ' × ' + question.b + ' = ?', 0, 0); ctx.restore();
+      // жизни и счёт
+      for(var i = 0; i < 3; i++) drawHeart(30 + i * 26, 92, i < lives);
+      ctx.fillStyle = '#243044'; ctx.font = 'bold 18px Arial'; ctx.textAlign = 'right';
+      ctx.fillText('Верно: ' + score, W - 18, 92);
+      if(streak >= 3){ ctx.textAlign = 'center'; ctx.fillStyle = '#ff8a3d'; ctx.font = 'bold 16px Arial'; ctx.fillText('Серия: ' + streak + '!', W/2, 92); }
+      if(flash > 0){ ctx.fillStyle = 'rgba(255,60,60,' + (flash * .28) + ')'; ctx.fillRect(0, 0, W, H); }
+    }
+  }
+
+  // ---------- цикл ----------
+  var last = performance.now();
+  function loop(now){
+    var dt = Math.min(0.033, (now - last) / 1000); last = now;
+    update(dt); draw();
+    requestAnimationFrame(loop);
+  }
+  clouds = []; for(var ci = 0; ci < 6; ci++) clouds.push({x:rnd(0, W), y:rnd(0, H), s:rnd(.6, 1.3), v:rnd(4, 12)});
+  camY = 0; particles = []; platforms = []; lives = 3; score = 0;
+  requestAnimationFrame(loop);
+
+  // ---------- управление ----------
+  window.addEventListener('keydown', function(e){
+    if(e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'ф'){ keys.left = true; e.preventDefault(); }
+    if(e.key === 'ArrowRight' || e.key === 'd' || e.key === 'в'){ keys.right = true; e.preventDefault(); }
+  });
+  window.addEventListener('keyup', function(e){
+    if(e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'ф') keys.left = false;
+    if(e.key === 'ArrowRight' || e.key === 'd' || e.key === 'в') keys.right = false;
+  });
+  function toWorldX(ev){ var r = cv.getBoundingClientRect(); return (ev.clientX - r.left) / r.width * W; }
+  cv.addEventListener('pointerdown', function(ev){ pointerDown = true; pointerX = toWorldX(ev); audio(); try { cv.setPointerCapture(ev.pointerId); } catch(e){} });
+  cv.addEventListener('pointermove', function(ev){ if(pointerDown) pointerX = toWorldX(ev); });
+  function up(){ pointerDown = false; pointerX = null; }
+  cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
+
+  document.getElementById('go').onclick = startGame;
+  document.getElementById('again').onclick = startGame;
+  document.getElementById('changeTables').onclick = function(e){
+    e.preventDefault(); state = 'menu';
+    document.getElementById('over').classList.add('hidden');
+    document.getElementById('start').classList.remove('hidden');
+  };
+})();
+</script>
+</body>
+</html>

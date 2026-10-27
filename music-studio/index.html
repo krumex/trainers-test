@@ -1,0 +1,426 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Музыкальная студия</title>
+<style>
+  :root{--ink:#243044;--muted:#667085;--line:#e3e8f1;--bg:#f4f6fb;--card:#fff;--accent:#5b5bd6;
+        --t0:#3b8fe0;--t1:#f08a24;--t2:#1e9e72;--drum:#e0486f}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;padding:10px;background:var(--bg);font-family:Arial,Helvetica,sans-serif;color:var(--ink)}
+  .app{max-width:1000px;margin:0 auto}
+  .bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;background:var(--card);border-radius:16px;padding:10px 12px;margin-bottom:10px;box-shadow:0 4px 14px rgba(0,0,0,.06)}
+  .bar h1{font-size:18px;margin:0 8px 0 0}
+  button,select{font:inherit}
+  .btn{border:0;border-radius:10px;padding:9px 14px;font-weight:700;cursor:pointer;background:#e9edf4;color:var(--ink)}
+  .btn:hover{background:#dde3ee}
+  .btn.primary{background:var(--accent);color:#fff}
+  .btn.primary:hover{background:#4a4ac0}
+  #play{min-width:130px;font-size:16px}
+  .field{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--muted)}
+  .field select{padding:7px 8px;border-radius:9px;border:1px solid #cfd7e4;background:#f7f8fb;color:var(--ink);font-size:14px}
+  input[type=range]{width:130px}
+  .bpm{font-weight:700;color:var(--ink);min-width:70px}
+  .spacer{flex:1}
+
+  .tracks{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px}
+  .tab{display:flex;align-items:center;gap:8px;border:2px solid var(--line);background:var(--card);border-radius:999px;padding:6px 12px;cursor:pointer;font-size:14px;font-weight:700}
+  .tab .dot{width:12px;height:12px;border-radius:50%}
+  .tab.active{border-color:var(--c);box-shadow:0 0 0 3px color-mix(in srgb,var(--c) 18%,transparent)}
+  .tab select{border:0;background:transparent;font-weight:700;font-size:14px;color:var(--ink);cursor:pointer}
+  .tab .x{border:0;background:transparent;cursor:pointer;color:var(--muted);font-size:16px;padding:0 2px}
+  .tab .m{border:0;background:transparent;cursor:pointer;font-size:15px;padding:0 2px}
+
+  .gridcard{background:var(--card);border-radius:16px;padding:10px;box-shadow:0 4px 14px rgba(0,0,0,.06);margin-bottom:10px}
+  .scroller{overflow-x:auto;padding-bottom:4px}
+  .board{display:grid;gap:2px;width:max-content;min-width:100%;touch-action:none;user-select:none;-webkit-user-select:none}
+  .lab{position:sticky;left:0;z-index:2;background:var(--card);display:flex;align-items:center;justify-content:flex-end;padding-right:8px;font-size:11px;color:var(--muted);width:42px;font-weight:700}
+  .lab.tonic{color:var(--ink)}
+  .cell{width:100%;min-width:26px;height:24px;border-radius:5px;background:#eef1f7;cursor:pointer}
+  .cell.beat{background:#e5e9f3}
+  .cell.tonicRow{background:#e3e7ff}
+  .cell.beat.tonicRow{background:#d6dbfa}
+  .cell.ghost{background:color-mix(in srgb,var(--gc) 22%,#fff)}
+  .cell.on{background:var(--c)}
+  .cell.now{outline:2px solid #ffb400;outline-offset:-2px;filter:brightness(1.1)}
+  .cell.now:not(.on){background:#fff3cc}
+  .drumrow .cell.on{background:var(--drum)}
+  .drumtitle{display:flex;align-items:center;gap:10px;margin:2px 0 8px;font-weight:700;font-size:14px}
+  .hint{font-size:13px;color:var(--muted);margin:6px 2px 0}
+  input[type=file]{display:none}
+  @media (max-width:560px){ .bar h1{width:100%} }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="bar">
+    <h1>🎹 Музыкальная студия</h1>
+    <button class="btn primary" id="play">▶ Играть</button>
+    <label class="field">Темп <input type="range" id="bpm" min="60" max="200" value="110"><span class="bpm" id="bpmv">110 уд/мин</span></label>
+    <label class="field">Звукоряд
+      <select id="scale"><option value="penta">Пентатоника (всегда красиво)</option><option value="major">Мажор (до-ре-ми…)</option></select>
+    </label>
+    <label class="field">Длина
+      <select id="len"><option value="16">16 шагов</option><option value="32">32 шага</option></select>
+    </label>
+    <span class="spacer"></span>
+    <button class="btn" id="demo">Пример</button>
+    <button class="btn" id="clear">Очистить</button>
+    <button class="btn" id="save">Сохранить в файл</button>
+    <button class="btn" id="open">Открыть файл</button>
+    <input type="file" id="file" accept=".json,application/json">
+  </div>
+
+  <div class="tracks" id="tracks"></div>
+
+  <div class="gridcard">
+    <div class="scroller"><div class="board" id="melody"></div></div>
+  </div>
+
+  <div class="gridcard">
+    <div class="drumtitle">🥁 Ударные <button class="m btn" id="drumMute" style="padding:4px 10px">🔊</button></div>
+    <div class="scroller"><div class="board" id="drums"></div></div>
+  </div>
+  <p class="hint">Нажимай на клетки, чтобы поставить ноту. Можно вести пальцем или мышкой и рисовать сразу много. Нажми на занятую клетку, чтобы убрать ноту.</p>
+</div>
+
+<script>
+(function(){
+  'use strict';
+  var ROWS = 14, MAXSTEPS = 32;
+  var TRACK_COLORS = ['#3b8fe0', '#f08a24', '#1e9e72'];
+  var INSTRUMENTS = {piano:'Пианино', synth:'Синтезатор', bell:'Колокольчики', bass:'Бас'};
+  var DRUMS = [{id:'kick', name:'Бочка'}, {id:'snare', name:'Барабан'}, {id:'hat', name:'Тарелочка'}, {id:'clap', name:'Хлопок'}];
+  var SCALES = {penta:[0,2,4,7,9], major:[0,2,4,5,7,9,11]};
+  var NAMES = {0:'До',1:'До♯',2:'Ре',3:'Ре♯',4:'Ми',5:'Фа',6:'Фа♯',7:'Соль',8:'Соль♯',9:'Ля',10:'Ля♯',11:'Си'};
+
+  function emptyRows(n, len){ var a = []; for(var i = 0; i < n; i++){ a.push(new Array(len).fill(false)); } return a; }
+  function newTrack(inst){ return {inst: inst || 'piano', mute: false, notes: emptyRows(ROWS, MAXSTEPS)}; }
+
+  var S = {
+    bpm: 110, steps: 16, scale: 'penta', active: 0,
+    tracks: [newTrack('piano')],
+    drums: {kick:new Array(MAXSTEPS).fill(false), snare:new Array(MAXSTEPS).fill(false), hat:new Array(MAXSTEPS).fill(false), clap:new Array(MAXSTEPS).fill(false)},
+    drumMute: false
+  };
+
+  function midiOf(row){ // row 0 = самая низкая нота
+    var sc = SCALES[S.scale], oct = Math.floor(row / sc.length), idx = row % sc.length;
+    return 60 + oct * 12 + sc[idx];
+  }
+  function freqOf(m){ return 440 * Math.pow(2, (m - 69) / 12); }
+
+  // ---------- аудио ----------
+  var ctx = null, master = null, noiseBuf = null;
+  function ensureAudio(){
+    if(!ctx){
+      try { ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e){ return null; }
+      var comp = ctx.createDynamicsCompressor();
+      master = ctx.createGain(); master.gain.value = 0.8;
+      master.connect(comp); comp.connect(ctx.destination);
+      noiseBuf = ctx.createBuffer(1, ctx.sampleRate * 0.5, ctx.sampleRate);
+      var d = noiseBuf.getChannelData(0); for(var i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    }
+    if(ctx.state === 'suspended') ctx.resume();
+    return ctx;
+  }
+  function env(g, t, peak, a, dec){
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(peak, t + a);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + a + dec);
+  }
+  function playNote(inst, freq, t){
+    var o, g, f;
+    if(inst === 'piano'){
+      g = ctx.createGain(); env(g, t, 0.28, 0.006, 1.1); g.connect(master);
+      o = ctx.createOscillator(); o.type = 'triangle'; o.frequency.value = freq; o.connect(g); o.start(t); o.stop(t + 1.2);
+      var o2 = ctx.createOscillator(), g2 = ctx.createGain(); o2.type = 'sine'; o2.frequency.value = freq * 2; g2.gain.value = 0.35; o2.connect(g2); g2.connect(g); o2.start(t); o2.stop(t + 1.2);
+    } else if(inst === 'synth'){
+      g = ctx.createGain(); env(g, t, 0.16, 0.01, 0.5);
+      f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.setValueAtTime(3000, t); f.frequency.exponentialRampToValueAtTime(500, t + 0.45);
+      o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = freq;
+      o.connect(f); f.connect(g); g.connect(master); o.start(t); o.stop(t + 0.6);
+    } else if(inst === 'bell'){
+      g = ctx.createGain(); env(g, t, 0.22, 0.003, 1.6); g.connect(master);
+      o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = freq * 2; o.connect(g); o.start(t); o.stop(t + 1.7);
+      var ob = ctx.createOscillator(), gb = ctx.createGain(); ob.type = 'sine'; ob.frequency.value = freq * 2 * 2.76; gb.gain.value = 0.25; ob.connect(gb); gb.connect(g); ob.start(t); ob.stop(t + 1.7);
+    } else if(inst === 'bass'){
+      g = ctx.createGain(); env(g, t, 0.3, 0.008, 0.45);
+      f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 700;
+      o = ctx.createOscillator(); o.type = 'square'; o.frequency.value = freq / 2;
+      o.connect(f); f.connect(g); g.connect(master); o.start(t); o.stop(t + 0.55);
+    }
+  }
+  function noise(t, dur, type, freq, peak){
+    var s = ctx.createBufferSource(); s.buffer = noiseBuf;
+    var f = ctx.createBiquadFilter(); f.type = type; f.frequency.value = freq;
+    var g = ctx.createGain(); env(g, t, peak, 0.002, dur);
+    s.connect(f); f.connect(g); g.connect(master); s.start(t); s.stop(t + dur + 0.05);
+  }
+  function playDrum(id, t){
+    if(id === 'kick'){
+      var o = ctx.createOscillator(), g = ctx.createGain();
+      o.frequency.setValueAtTime(160, t); o.frequency.exponentialRampToValueAtTime(40, t + 0.14);
+      env(g, t, 0.9, 0.002, 0.22); o.connect(g); g.connect(master); o.start(t); o.stop(t + 0.3);
+    } else if(id === 'snare'){
+      noise(t, 0.16, 'highpass', 1200, 0.5);
+      var o2 = ctx.createOscillator(), g2 = ctx.createGain(); o2.type = 'triangle'; o2.frequency.value = 190;
+      env(g2, t, 0.35, 0.002, 0.1); o2.connect(g2); g2.connect(master); o2.start(t); o2.stop(t + 0.15);
+    } else if(id === 'hat'){
+      noise(t, 0.05, 'highpass', 7500, 0.35);
+    } else if(id === 'clap'){
+      noise(t, 0.04, 'bandpass', 1600, 0.5); noise(t + 0.012, 0.04, 'bandpass', 1600, 0.45); noise(t + 0.026, 0.12, 'bandpass', 1500, 0.4);
+    }
+  }
+
+  // ---------- сетка ----------
+  var melodyEl = document.getElementById('melody'), drumsEl = document.getElementById('drums');
+  var cellsM = [], cellsD = []; // cellsM[row][col], cellsD[drumIndex][col]
+
+  function build(){
+    var n = S.steps;
+    [melodyEl, drumsEl].forEach(function(el){ el.style.gridTemplateColumns = '42px repeat(' + n + ', minmax(26px, 1fr))'; el.innerHTML = ''; });
+    cellsM = []; cellsD = [];
+    var sc = SCALES[S.scale];
+    for(var r = ROWS - 1; r >= 0; r--){
+      var m = midiOf(r), pc = m % 12;
+      var lab = document.createElement('div'); lab.className = 'lab' + (pc === 0 ? ' tonic' : ''); lab.textContent = NAMES[pc];
+      melodyEl.appendChild(lab);
+      cellsM[r] = [];
+      for(var c = 0; c < n; c++){
+        var d = document.createElement('div');
+        d.className = 'cell' + (c % 4 === 0 ? ' beat' : '') + (pc === 0 ? ' tonicRow' : '');
+        d.dataset.r = r; d.dataset.c = c; d.dataset.k = 'm';
+        melodyEl.appendChild(d); cellsM[r][c] = d;
+      }
+    }
+    DRUMS.forEach(function(dr, i){
+      var lab = document.createElement('div'); lab.className = 'lab'; lab.textContent = dr.name; lab.style.fontSize = '10px';
+      drumsEl.appendChild(lab);
+      cellsD[i] = [];
+      for(var c = 0; c < n; c++){
+        var d = document.createElement('div');
+        d.className = 'cell drumrow' + (c % 4 === 0 ? ' beat' : '');
+        d.dataset.r = i; d.dataset.c = c; d.dataset.k = 'd';
+        drumsEl.appendChild(d); cellsD[i][c] = d;
+      }
+    });
+    drumsEl.classList.add('drumrow');
+    render();
+  }
+
+  function render(){
+    var n = S.steps, tr = S.tracks[S.active], col = TRACK_COLORS[S.active];
+    melodyEl.style.setProperty('--c', col);
+    for(var r = 0; r < ROWS; r++){
+      for(var c = 0; c < n; c++){
+        var el = cellsM[r][c];
+        var on = tr.notes[r][c], ghost = false, gc = '';
+        if(!on){
+          for(var t = 0; t < S.tracks.length; t++){ if(t !== S.active && S.tracks[t].notes[r][c]){ ghost = true; gc = TRACK_COLORS[t]; break; } }
+        }
+        el.classList.toggle('on', on);
+        el.classList.toggle('ghost', ghost);
+        if(ghost) el.style.setProperty('--gc', gc); else el.style.removeProperty('--gc');
+      }
+    }
+    for(var i = 0; i < DRUMS.length; i++) for(var c2 = 0; c2 < n; c2++) cellsD[i][c2].classList.toggle('on', S.drums[DRUMS[i].id][c2]);
+    renderTracks();
+  }
+
+  function renderTracks(){
+    var box = document.getElementById('tracks'); box.innerHTML = '';
+    S.tracks.forEach(function(tr, i){
+      var tab = document.createElement('div'); tab.className = 'tab' + (i === S.active ? ' active' : ''); tab.style.setProperty('--c', TRACK_COLORS[i]);
+      var dot = document.createElement('span'); dot.className = 'dot'; dot.style.background = TRACK_COLORS[i];
+      var sel = document.createElement('select');
+      Object.keys(INSTRUMENTS).forEach(function(k){ var o = document.createElement('option'); o.value = k; o.textContent = INSTRUMENTS[k]; if(k === tr.inst) o.selected = true; sel.appendChild(o); });
+      sel.onchange = function(){ tr.inst = sel.value; ensureAudio(); preview(tr.inst, midiOf(4)); save(); };
+      sel.onclick = function(e){ e.stopPropagation(); };
+      var mute = document.createElement('button'); mute.className = 'm'; mute.textContent = tr.mute ? '🔇' : '🔊'; mute.title = 'Звук дорожки';
+      mute.onclick = function(e){ e.stopPropagation(); tr.mute = !tr.mute; renderTracks(); save(); };
+      tab.appendChild(dot); tab.appendChild(sel); tab.appendChild(mute);
+      if(S.tracks.length > 1){
+        var x = document.createElement('button'); x.className = 'x'; x.textContent = '✕'; x.title = 'Удалить дорожку';
+        x.onclick = function(e){ e.stopPropagation(); S.tracks.splice(i, 1); S.active = Math.min(S.active, S.tracks.length - 1); render(); save(); };
+        tab.appendChild(x);
+      }
+      tab.onclick = function(){ S.active = i; render(); };
+      box.appendChild(tab);
+    });
+    if(S.tracks.length < 3){
+      var add = document.createElement('button'); add.className = 'btn'; add.textContent = '+ Дорожка';
+      add.onclick = function(){ S.tracks.push(newTrack(S.tracks.length === 1 ? 'bass' : 'bell')); S.active = S.tracks.length - 1; render(); save(); };
+      box.appendChild(add);
+    }
+    document.getElementById('drumMute').textContent = S.drumMute ? '🔇' : '🔊';
+  }
+
+  // ---------- рисование нотами ----------
+  var painting = false, paintVal = true, lastKey = '';
+  function cellFromEvent(ev){
+    var el = document.elementFromPoint(ev.clientX, ev.clientY);
+    return el && el.classList && el.classList.contains('cell') ? el : null;
+  }
+  function preview(inst, midi){ if(!ensureAudio()) return; playNote(inst, freqOf(midi), ctx.currentTime + 0.01); }
+  function apply(el){
+    var r = +el.dataset.r, c = +el.dataset.c, k = el.dataset.k, key = k + r + ',' + c;
+    if(key === lastKey) return; lastKey = key;
+    if(k === 'm'){
+      var tr = S.tracks[S.active];
+      if(tr.notes[r][c] === paintVal) return;
+      tr.notes[r][c] = paintVal;
+      if(paintVal) preview(tr.inst, midiOf(r));
+    } else {
+      var id = DRUMS[r].id;
+      if(S.drums[id][c] === paintVal) return;
+      S.drums[id][c] = paintVal;
+      if(paintVal){ ensureAudio(); playDrum(id, ctx.currentTime + 0.01); }
+    }
+    render();
+  }
+  function down(ev){
+    var el = cellFromEvent(ev); if(!el) return;
+    ev.preventDefault();
+    var r = +el.dataset.r, c = +el.dataset.c;
+    var cur = el.dataset.k === 'm' ? S.tracks[S.active].notes[r][c] : S.drums[DRUMS[r].id][c];
+    paintVal = !cur; painting = true; lastKey = ''; apply(el);
+  }
+  function move(ev){ if(!painting) return; var el = cellFromEvent(ev); if(el) apply(el); }
+  function up(){ if(painting){ painting = false; save(); } }
+  [melodyEl, drumsEl].forEach(function(el){ el.addEventListener('pointerdown', down); });
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', up);
+  window.addEventListener('pointercancel', up);
+
+  // ---------- проигрывание ----------
+  var playing = false, timer = null, nextTime = 0, stepIdx = 0, queue = [], shownCol = -1, raf = 0;
+  function scheduleStep(i, t){
+    S.tracks.forEach(function(tr){
+      if(tr.mute) return;
+      for(var r = 0; r < ROWS; r++) if(tr.notes[r][i]) playNote(tr.inst, freqOf(midiOf(r)), t);
+    });
+    if(!S.drumMute) DRUMS.forEach(function(d){ if(S.drums[d.id][i]) playDrum(d.id, t); });
+  }
+  function tick(){
+    while(nextTime < ctx.currentTime + 0.15){
+      scheduleStep(stepIdx, nextTime);
+      queue.push({i:stepIdx, t:nextTime});
+      nextTime += 60 / S.bpm / 2;
+      stepIdx = (stepIdx + 1) % S.steps;
+    }
+  }
+  function showCol(c){
+    if(shownCol >= 0){
+      for(var r = 0; r < ROWS; r++) if(cellsM[r] && cellsM[r][shownCol]) cellsM[r][shownCol].classList.remove('now');
+      for(var i = 0; i < DRUMS.length; i++) if(cellsD[i] && cellsD[i][shownCol]) cellsD[i][shownCol].classList.remove('now');
+    }
+    shownCol = c;
+    if(c >= 0){
+      for(var r2 = 0; r2 < ROWS; r2++) if(cellsM[r2][c]) cellsM[r2][c].classList.add('now');
+      for(var i2 = 0; i2 < DRUMS.length; i2++) if(cellsD[i2][c]) cellsD[i2][c].classList.add('now');
+    }
+  }
+  function frame(){
+    if(!playing) return;
+    while(queue.length && queue[0].t <= ctx.currentTime){ showCol(queue.shift().i); }
+    raf = requestAnimationFrame(frame);
+  }
+  var playBtn = document.getElementById('play');
+  function start(){
+    if(!ensureAudio()) return;
+    playing = true; stepIdx = 0; nextTime = ctx.currentTime + 0.06; queue = [];
+    tick(); timer = setInterval(tick, 25);
+    playBtn.textContent = '■ Стоп'; raf = requestAnimationFrame(frame);
+  }
+  function stop(){
+    playing = false; clearInterval(timer); cancelAnimationFrame(raf); queue = []; showCol(-1);
+    playBtn.textContent = '▶ Играть';
+  }
+  playBtn.onclick = function(){ playing ? stop() : start(); };
+  window.addEventListener('keydown', function(e){ if(e.code === 'Space' && e.target.tagName !== 'SELECT' && e.target.tagName !== 'INPUT'){ e.preventDefault(); playBtn.click(); } });
+
+  // ---------- настройки ----------
+  var bpmEl = document.getElementById('bpm');
+  bpmEl.oninput = function(){ S.bpm = +bpmEl.value; document.getElementById('bpmv').textContent = S.bpm + ' уд/мин'; };
+  bpmEl.onchange = save;
+  document.getElementById('scale').onchange = function(e){ S.scale = e.target.value; stop(); build(); save(); };
+  document.getElementById('len').onchange = function(e){ S.steps = +e.target.value; stop(); build(); save(); };
+  document.getElementById('drumMute').onclick = function(){ S.drumMute = !S.drumMute; renderTracks(); save(); };
+
+  document.getElementById('clear').onclick = function(){
+    if(!confirm('Стереть всю музыку?')) return;
+    S.tracks = [newTrack('piano')]; S.active = 0;
+    Object.keys(S.drums).forEach(function(k){ S.drums[k] = new Array(MAXSTEPS).fill(false); });
+    render(); save();
+  };
+
+  document.getElementById('demo').onclick = function(){
+    stop();
+    S.scale = 'major'; document.getElementById('scale').value = 'major';
+    S.steps = 16; document.getElementById('len').value = '16';
+    S.bpm = 120; bpmEl.value = 120; document.getElementById('bpmv').textContent = '120 уд/мин';
+    S.tracks = [newTrack('piano'), newTrack('bass')]; S.active = 0;
+    var melody = [2,2,3,4, 4,3,2,1, 0,0,1,2, 2,1,1,-1];
+    melody.forEach(function(r, c){ if(r >= 0) S.tracks[0].notes[r][c] = true; });
+    [0,4,8,12].forEach(function(c){ S.tracks[1].notes[0][c] = true; });
+    Object.keys(S.drums).forEach(function(k){ S.drums[k] = new Array(MAXSTEPS).fill(false); });
+    [0,4,8,12].forEach(function(c){ S.drums.kick[c] = true; });
+    [4,12].forEach(function(c){ S.drums.snare[c] = true; });
+    [2,6,10,14].forEach(function(c){ S.drums.hat[c] = true; });
+    build(); save();
+  };
+
+  // ---------- файл ----------
+  function snapshot(){
+    return {v:1, bpm:S.bpm, steps:S.steps, scale:S.scale, drumMute:S.drumMute,
+      tracks:S.tracks.map(function(t){ return {inst:t.inst, mute:t.mute, notes:t.notes}; }), drums:S.drums};
+  }
+  function restore(o){
+    if(!o || !o.tracks || !o.drums) throw new Error('bad');
+    S.bpm = Math.max(60, Math.min(200, +o.bpm || 110));
+    S.steps = o.steps === 32 ? 32 : 16;
+    S.scale = SCALES[o.scale] ? o.scale : 'penta';
+    S.drumMute = !!o.drumMute;
+    S.tracks = o.tracks.slice(0, 3).map(function(t){
+      var tr = newTrack(INSTRUMENTS[t.inst] ? t.inst : 'piano'); tr.mute = !!t.mute;
+      for(var r = 0; r < ROWS; r++) for(var c = 0; c < MAXSTEPS; c++) tr.notes[r][c] = !!(t.notes && t.notes[r] && t.notes[r][c]);
+      return tr;
+    });
+    if(!S.tracks.length) S.tracks = [newTrack('piano')];
+    S.active = 0;
+    DRUMS.forEach(function(d){
+      for(var c = 0; c < MAXSTEPS; c++) S.drums[d.id][c] = !!(o.drums[d.id] && o.drums[d.id][c]);
+    });
+    bpmEl.value = S.bpm; document.getElementById('bpmv').textContent = S.bpm + ' уд/мин';
+    document.getElementById('scale').value = S.scale; document.getElementById('len').value = String(S.steps);
+  }
+  function save(){ try { localStorage.setItem('musicStudioV1', JSON.stringify(snapshot())); } catch(e){} }
+
+  document.getElementById('save').onclick = function(){
+    var blob = new Blob([JSON.stringify(snapshot())], {type:'application/json'});
+    var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'моя-музыка.json';
+    document.body.appendChild(a); a.click();
+    setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 500);
+  };
+  var fileEl = document.getElementById('file');
+  document.getElementById('open').onclick = function(){ fileEl.click(); };
+  fileEl.onchange = function(){
+    var f = fileEl.files[0]; if(!f) return;
+    var rd = new FileReader();
+    rd.onload = function(){
+      try { stop(); restore(JSON.parse(rd.result)); build(); save(); }
+      catch(e){ alert('Не получилось открыть файл. Выбери файл, который сохранила эта студия.'); }
+      fileEl.value = '';
+    };
+    rd.readAsText(f);
+  };
+
+  // ---------- старт ----------
+  try { var raw = localStorage.getItem('musicStudioV1'); if(raw) restore(JSON.parse(raw)); } catch(e){}
+  build();
+})();
+</script>
+</body>
+</html>

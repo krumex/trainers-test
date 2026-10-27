@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Учим иероглифы</title>
+<style>
+  :root{--ink:#243044;--muted:#667085;--bg:#f4f6fb;--card:#fff;--accent:#d8433f;--ok:#1a8f3c;--err:#c62828}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{font-family:Arial,Helvetica,sans-serif;background:var(--bg);margin:0;padding:12px;color:var(--ink)}
+  .app{max-width:1100px;margin:0 auto}
+  h1{text-align:center;font-size:22px;margin:0 0 4px}
+  .hint{text-align:center;color:var(--muted);max-width:640px;margin:0 auto 12px;font-size:14px;line-height:1.35}
+  .top{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;align-items:center;margin-bottom:12px}
+  .tab{border:2px solid #d5dbe8;background:#fff;border-radius:999px;padding:8px 14px;font-size:15px;font-weight:700;cursor:pointer;color:var(--ink)}
+  .tab.on{background:var(--accent);border-color:var(--accent);color:#fff}
+  .progress{text-align:center;font-size:14px;color:var(--muted);margin-bottom:12px}
+  .progress b{color:var(--ok)}
+  .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px}
+  .card{background:var(--card);border-radius:14px;box-shadow:0 2px 8px rgba(0,0,0,.09);padding:12px;text-align:center;border:3px solid transparent}
+  .card.done{border-color:#b7e3c4}
+  .card h2{margin:0;font-size:20px;min-height:26px}
+  .card h2 small{font-weight:400;color:var(--muted);font-size:14px}
+  .card p{margin:2px 0 8px;color:var(--muted);font-size:15px;min-height:20px}
+  .target{border:1px solid #ddd;background:#fafafa;width:200px;height:200px;margin:0 auto 8px;border-radius:8px;touch-action:none}
+  .target svg{display:block}
+  button.b{background:#3b6fe0;color:#fff;border:0;border-radius:8px;padding:9px 11px;margin:3px;cursor:pointer;font-size:14px;font-weight:700}
+  button.b:hover{background:#2a58c0}
+  button.b.alt{background:#e9edf4;color:var(--ink)}
+  .msg{min-height:20px;font-size:14px;margin-top:6px;font-weight:700}
+  .ok{color:var(--ok)} .err{color:var(--err)}
+  .loading{grid-column:1/-1;text-align:center;color:var(--muted);padding:30px}
+  .fail{background:#fff4f2;border:1px solid #f1b9b2;border-radius:12px;padding:14px;max-width:640px;margin:20px auto;text-align:center;font-size:15px}
+  footer{text-align:center;color:#888;font-size:12px;margin-top:22px;line-height:1.5}
+  footer a{color:#888}
+</style>
+</head>
+<body>
+<div class="app">
+  <h1>Учим китайские иероглифы</h1>
+  <p class="hint">Выбери тему. «Показать» — смотри, в каком порядке рисуются черты. «Написать самому» — рисуй иероглиф мышкой или пальцем прямо по серой подсказке.</p>
+  <div class="top" id="tabs"></div>
+  <div class="progress" id="progress"></div>
+  <div class="cards" id="cards"></div>
+  <footer>
+    Данные о чертах: <a href="https://github.com/skishore/makemeahanzi" target="_blank" rel="noopener">Make Me a Hanzi</a> ·
+    Анимация и проверка: <a href="https://hanziwriter.org" target="_blank" rel="noopener">Hanzi Writer</a>
+  </footer>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/hanzi-writer@3.5/dist/hanzi-writer.min.js"></script>
+<script>
+(function(){
+  'use strict';
+  // Тема → [иероглиф, пиньинь, перевод]. Базовые знаки уровня HSK 1.
+  var TOPICS = [
+    {id:'num', name:'Числа', list:[
+      ['一','yī','один'],['二','èr','два'],['三','sān','три'],['四','sì','четыре'],['五','wǔ','пять'],
+      ['六','liù','шесть'],['七','qī','семь'],['八','bā','восемь'],['九','jiǔ','девять'],['十','shí','десять']]},
+    {id:'people', name:'Люди и семья', list:[
+      ['人','rén','человек'],['我','wǒ','я'],['你','nǐ','ты'],['他','tā','он'],['她','tā','она'],
+      ['爸','bà','папа'],['妈','mā','мама'],['女','nǚ','женщина'],['子','zǐ','сын, ребёнок'],['家','jiā','семья, дом']]},
+    {id:'nature', name:'Природа', list:[
+      ['日','rì','солнце, день'],['月','yuè','луна, месяц'],['水','shuǐ','вода'],['火','huǒ','огонь'],['山','shān','гора'],
+      ['木','mù','дерево'],['天','tiān','небо'],['雨','yǔ','дождь'],['花','huā','цветок'],['云','yún','облако']]},
+    {id:'body', name:'Тело и размер', list:[
+      ['口','kǒu','рот'],['手','shǒu','рука'],['心','xīn','сердце'],['大','dà','большой'],['小','xiǎo','маленький'],
+      ['多','duō','много'],['少','shǎo','мало'],['上','shàng','вверх, над'],['下','xià','вниз, под'],['中','zhōng','середина']]},
+    {id:'act', name:'Действия', list:[
+      ['好','hǎo','хороший'],['来','lái','приходить'],['去','qù','идти, уходить'],['看','kàn','смотреть'],['吃','chī','есть'],
+      ['喝','hē','пить'],['说','shuō','говорить'],['听','tīng','слушать'],['写','xiě','писать'],['爱','ài','любить']]},
+    {id:'school', name:'Школа и еда', list:[
+      ['学','xué','учиться'],['书','shū','книга'],['读','dú','читать'],['老','lǎo','старый'],['师','shī','учитель'],
+      ['米','mǐ','рис'],['茶','chá','чай'],['饭','fàn','еда, рис'],['菜','cài','овощи, блюдо'],['肉','ròu','мясо']]}
+  ];
+
+  var tabsEl = document.getElementById('tabs');
+  var cardsEl = document.getElementById('cards');
+  var progEl = document.getElementById('progress');
+  var current = TOPICS[0].id;
+
+  // ---- «выучено» хранится в браузере, если он это разрешает ----
+  var memory = {};
+  try { memory = JSON.parse(localStorage.getItem('hanziHsk1Done') || '{}') || {}; } catch(e){ memory = {}; }
+  function remember(ch){ memory[ch] = 1; try { localStorage.setItem('hanziHsk1Done', JSON.stringify(memory)); } catch(e){} }
+
+  // ---- произношение (если в браузере есть китайский голос) ----
+  var zhVoice = null;
+  function findVoice(){
+    if(!('speechSynthesis' in window)) return;
+    var v = window.speechSynthesis.getVoices().filter(function(x){ return /^zh/i.test(x.lang); });
+    zhVoice = v[0] || null;
+  }
+  findVoice();
+  if('speechSynthesis' in window){ window.speechSynthesis.onvoiceschanged = function(){ findVoice(); renderTopic(); }; }
+  function speak(text){
+    if(!zhVoice) return;
+    var u = new SpeechSynthesisUtterance(text); u.voice = zhVoice; u.lang = zhVoice.lang; u.rate = 0.8;
+    window.speechSynthesis.cancel(); window.speechSynthesis.speak(u);
+  }
+
+  function renderTabs(){
+    tabsEl.innerHTML = '';
+    TOPICS.forEach(function(t){
+      var b = document.createElement('button'); b.className = 'tab' + (t.id === current ? ' on' : ''); b.textContent = t.name;
+      b.onclick = function(){ current = t.id; renderTabs(); renderTopic(); };
+      tabsEl.appendChild(b);
+    });
+  }
+
+  function updateProgress(topic){
+    var n = topic.list.filter(function(x){ return memory[x[0]]; }).length;
+    progEl.innerHTML = 'Выучено в этой теме: <b>' + n + ' из ' + topic.list.length + '</b>';
+  }
+
+  function renderTopic(){
+    var topic = TOPICS.filter(function(t){ return t.id === current; })[0];
+    cardsEl.innerHTML = '';
+    updateProgress(topic);
+    if(typeof HanziWriter === 'undefined'){
+      cardsEl.innerHTML = '<div class="fail">Не получилось загрузить библиотеку для иероглифов. Проверь интернет и обнови страницу.</div>';
+      return;
+    }
+    topic.list.forEach(function(item, i){
+      var ch = item[0], py = item[1], ru = item[2];
+      var card = document.createElement('div'); card.className = 'card' + (memory[ch] ? ' done' : '');
+      card.innerHTML =
+        '<h2>' + ch + ' <small>' + py + '</small></h2>' +
+        '<p>' + ru + '</p>' +
+        '<div class="target" id="t_' + current + '_' + i + '"></div>' +
+        '<button class="b anim">Показать</button>' +
+        '<button class="b quiz">Написать самому</button>' +
+        (zhVoice ? '<button class="b alt say">🔊</button>' : '') +
+        '<div class="msg"></div>';
+      cardsEl.appendChild(card);
+      var msg = card.querySelector('.msg');
+      function say(t, cls){ msg.textContent = t; msg.className = 'msg ' + (cls || ''); }
+
+      var writer = HanziWriter.create('t_' + current + '_' + i, ch, {
+        width:200, height:200, padding:10, showOutline:true,
+        strokeAnimationSpeed:1, delayBetweenStrokes:300,
+        onLoadCharDataError: function(){ say('Этот иероглиф не загрузился. Проверь интернет.', 'err'); }
+      });
+
+      card.querySelector('.anim').onclick = function(){ writer.cancelQuiz(); say(''); writer.animateCharacter(); };
+      card.querySelector('.quiz').onclick = function(){
+        say('Рисуй черты по порядку');
+        writer.quiz({
+          onCorrectStroke: function(){ say('Верно!', 'ok'); },
+          onMistake: function(){ say('Не так, попробуй ещё раз', 'err'); },
+          onComplete: function(s){
+            if(s.totalMistakes === 0){
+              say('Отлично! Без ошибок ⭐', 'ok'); remember(ch); card.classList.add('done'); updateProgress(topic);
+            } else {
+              say('Готово! Ошибок: ' + s.totalMistakes + '. Попробуй без ошибок.', 'ok');
+            }
+          }
+        });
+      };
+      var sayBtn = card.querySelector('.say');
+      if(sayBtn) sayBtn.onclick = function(){ speak(ch); };
+    });
+  }
+
+  renderTabs();
+  renderTopic();
+})();
+</script>
+</body>
+</html>
